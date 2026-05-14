@@ -151,3 +151,5 @@ Route on error.error field:
   Enforcement happens in RiskManager agent logic
 - to_summary_dict() omits paper_mode by design
   Add it if agents ever need to reason about live vs paper
+- get_all_market_data() returns MarketSnapshot (Pydantic model),
+  not a plain dict — all agents type their input accordingly
