@@ -2,20 +2,22 @@
 
 ## Goal
 
-Build an AI-native hedge fund that trades tokenized US stocks (xStocks) on Kraken
+Build an AI-native hedge fund that trades tokenised US stocks (xStocks) on Kraken
 24/7 using a multi-agent system. Submitted to the lablab.ai x Kraken hackathon.
 
 The final system has specialist agents (Momentum, Sentiment, Macro analysts → Risk
 Manager → Portfolio Manager → Trader → Reporter) that run on a 15-minute loop.
 Paper mode uses native Kraken paper commands; live mode executes real orders.
 
-See `claude.md` for the full architecture, agent list, and build schedule.
+See `CLAUDE.md` for the full architecture, agent list, and build schedule.
 
 ---
 
-## Current State — Day 1 Foundation Complete
+## Current State — Day 1 + Day 2 + Day 3 Complete
 
-All 7 Day 1 files are built and tested. Nothing is half-finished.
+67 tests, all passing. Nothing is half-finished.
+
+### Day 1 — Foundation
 
 | File | What it does |
 |---|---|
@@ -27,19 +29,39 @@ All 7 Day 1 files are built and tested. Nothing is half-finished.
 | `core/fund_state.py` | FundStateManager: price updates, stop-loss checks, position open/close, atomic JSON checkpoint |
 | `utils/logger.py` | system_logger (stdout + file), log_decision() → decisions.jsonl, log_trade() → trades.jsonl |
 
-Install deps: `pip install -e ".[dev]"`  
-Copy env: `cp .env.example .env` and fill in keys  
+### Day 2 — Research Desk
+
+| File | What it does |
+|---|---|
+| `utils/llm.py` | Shared async LLM helper: Fireworks API via openai package, JSON parse, Pydantic validation, 1 retry, returns None on failure |
+| `agents/momentum_analyst.py` | MomentumAnalyst: takes MomentumSignal + price history → AnalystReport. Always returns (safe hold on failure). |
+| `agents/sentiment_analyst.py` | SentimentAnalyst: takes headlines → AnalystReport or None. Empty headlines → hold at 0.0. Filters below MIN_CONFIDENCE → None. |
+| `agents/macro_analyst.py` | MacroAnalyst: takes SPY/QQQ histories + universe prices → AnalystReport or None. Filters below MIN_CONFIDENCE → None. |
+| `agents/research_desk.py` | ResearchDesk: runs all 3 analysts × 10 tickers in one asyncio.gather (30 tasks). Flattens + filters Nones. Logs summary. |
+
+### Day 3 — Risk + Portfolio
+
+| File | What it does |
+|---|---|
+| `agents/risk_manager.py` | RiskManager: pure Python, 6 gates in order, synchronous. Hold signals vetoed silently. Per-report try/except. |
+| `agents/portfolio_manager.py` | PortfolioManager: LLM sizes each approved decision in parallel. Python enforces size bounds after LLM. |
+
+Install deps: `pip install -e ".[dev]"`
+Copy env: `cp .env.example .env` and fill in keys
 Smoke test: `FIREWORKS_API_KEY=fw KRAKEN_API_KEY=k KRAKEN_API_SECRET=s NEWS_API_KEY=n python -c "import config; config.validate_config()"`
+Run all tests: `FIREWORKS_API_KEY=fw KRAKEN_API_KEY=k KRAKEN_API_SECRET=s NEWS_API_KEY=n python -m pytest tests/ -q`
 
 ---
 
 ## Files Actively Being Edited
 
-None. Day 1 is complete. The next session starts fresh files.
+None. Day 1–3 are complete. The next session starts fresh files.
 
 ---
 
 ## What Failed or Needed Fixing
+
+### Day 1 (carried forward)
 
 **config.py / .env.example naming mismatch** — `.env.example` used `INITIAL_CAPITAL_USD`
 but `config.py` loaded `STARTING_CASH`. Fixed by standardising on `STARTING_CASH`.
@@ -63,35 +85,58 @@ name) but the binary is named `kraken`. Fixed to match config.py default.
 **FIREWORKS_MODEL stale** — was `llama-v3p1-70b-instruct`, updated to `llama-v3p3-70b-instruct`
 in both config.py and .env.example.
 
+### Day 2–3
+
+**Test substring false failure** — `test_build_prompt_clips_to_12_prices` checked
+`"1.00" not in prompt` but `"1.00"` is a substring of `"21.00"`. Fixed to check
+`"17.00" not in prompt` (the first excluded price) and `"18.00" in prompt`.
+
+**Spec field name mismatches** — the original specs used informal names that didn't match
+actual Pydantic model fields. Corrected silently in each file:
+- `fund_state.cash_usd` → `fund_state.cash`
+- `fund_state.open_positions` → `fund_state.positions`
+- `report.action` → `report.signal` (in risk_manager context)
+- `TradeInstruction(signal=...)` → `TradeInstruction(action=...)`
+- `TradeInstruction(reasoning=...)` → `TradeInstruction(rationale=...)`
+- `decision.signal` → `decision.original_report.signal`
+
+**get_portfolio_summary() lives on FundStateManager, not FundState** — the spec said
+"call get_portfolio_summary()" but PortfolioManager receives a `FundState`, not a
+`FundStateManager`. Used `FundState.to_summary_dict()` instead, which was built for
+exactly this purpose.
+
+**SentimentAnalyst and MacroAnalyst return None below MIN_CONFIDENCE** — MomentumAnalyst
+always returns an AnalystReport (safe hold on failure). Sentiment and Macro return
+`Optional[AnalystReport]` because they apply the MIN_CONFIDENCE filter before returning.
+This asymmetry is intentional: momentum always has something to say (the signal is
+pre-computed); sentiment and macro may legitimately have nothing actionable.
+
 ---
 
-## Next Step — Day 2: Research Desk
+## Next Step — Day 4: Trader + Reporter
 
-Build three analyst agents in `agents/`. Each takes a `MarketSnapshot` and returns an
-`AnalystReport`. All follow the LLM usage pattern in `claude.md`:
-build prompt → JSON-only response → validate as Pydantic model → return or safe default.
+### agents/trader.py
+- Input: `list[TradeInstruction]`, `FundStateManager`
+- For each instruction: check paper mode from config
+- Paper mode: call `kraken paper buy/sell` via kraken_cli, log via log_trade()
+- Live mode: call `kraken order buy/sell --validate` first, then execute if valid
+- Update FundStateManager after each fill (add_position / close_position)
+- Return list of executed ticker strings
 
-**agents/momentum_analyst.py**
-- Input: `MomentumSignal` from `market_data.calculate_momentum_signals()`
-- The signal is already computed; the LLM's job is to reason about it and assign confidence
-- Prompt should include: ticker, short/medium momentum, trend direction, price history snippet
+### agents/reporter.py
+- Input: `FundState`, `list[TradeInstruction]`, elapsed time
+- LLM agent: generates a human-readable hourly summary
+- Writes to logs/reports/ as timestamped markdown files
+- Optionally posts to a configured webhook (X / Slack)
+- Should use call_llm() from utils/llm.py
 
-**agents/sentiment_analyst.py**
-- Input: headlines list from `market_data.get_news_headlines()`
-- Returns buy/sell/hold with confidence based on headline sentiment
-- Prompt should include: ticker, 5 most recent headlines, current price for context
-
-**agents/macro_analyst.py**
-- Input: SPYx/USD and QQQx/USD signals (broad market proxies already in TRADEABLE_TICKERS)
-- Returns a market-wide bias that influences all other signals
-
-**Shared LLM call helper** — before building the three agents, write `utils/llm.py`:
-a single `async call_llm(prompt: str, response_model: type[BaseModel]) -> BaseModel` that
-handles the Fireworks API call, JSON parsing, Pydantic validation, one retry on parse
-failure, and the safe-default return. All three analysts will use it.
-
-**Run all three in parallel** via `asyncio.gather` in an orchestration function
-`agents/research_desk.py` → returns `list[AnalystReport]`.
-
-The Fireworks client uses the `openai` package pointed at `FIREWORKS_BASE_URL` with
-`FIREWORKS_API_KEY`. See `config.py` for the exact values.
+### After trader + reporter: main.py
+Wire everything together in a 15-minute async loop:
+1. `get_all_market_data()`
+2. `ResearchDesk.analyze(snapshot)`
+3. `RiskManager.evaluate(reports, fund_state)`
+4. `PortfolioManager.allocate(decisions, fund_state)`
+5. `Trader.execute(instructions, fund_state_manager)`
+6. Every 4th loop: `Reporter.run(fund_state, trades)`
+7. `FundStateManager.save()`
+8. Sleep until next interval

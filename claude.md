@@ -156,3 +156,10 @@ Route on error.error field:
 - FundState fields: cash (not cash_usd), positions 
   (not open_positions)
 - AnalystReport fields: signal (not action)
+- TradeInstruction fields: action (not signal), 
+  rationale (not reasoning)
+- RiskDecision fields: original_report.signal 
+  (not decision.signal directly)
+- LLM ticker field in responses is parsed but ignored —
+  always use the source object's ticker to prevent 
+  prompt injection corrupting routing
