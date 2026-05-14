@@ -10,8 +10,10 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from datetime import date
 
 from agents.portfolio_manager import PortfolioManager
+from agents.reporter import Reporter
 from agents.research_desk import ResearchDesk
 from agents.risk_manager import RiskManager
 from agents.trader import Trader
@@ -32,9 +34,11 @@ class TradingLoop:
         self.risk_manager = RiskManager()
         self.portfolio_manager = PortfolioManager()
         self.trader = Trader()
+        self.reporter = Reporter()
         self.logger = logging.getLogger("loop")
         self.cycle_count = 0
         self._running = False
+        self.last_report_date: date | None = None
 
     async def run(self) -> None:
         """Start the trading loop and run until stop() is called.
@@ -86,6 +90,7 @@ class TradingLoop:
         """
         cycle_start = time.monotonic()
         logger.info("TradingLoop: cycle %d starting", self.cycle_count + 1)
+        instructions = []
 
         # Step 2 — market data
         snapshot = await get_all_market_data()
@@ -122,6 +127,17 @@ class TradingLoop:
             self.cycle_count + 1,
             elapsed,
         )
+
+        # Daily report — once per calendar day (UTC)
+        today = date.today()
+        if self.last_report_date != today:
+            await self.reporter.run(
+                self.state_manager.state,
+                instructions,
+                self.cycle_count,
+                elapsed,
+            )
+            self.last_report_date = today
 
         # Step 9 — increment counter
         self.cycle_count += 1
