@@ -153,3 +153,6 @@ Route on error.error field:
   Add it if agents ever need to reason about live vs paper
 - get_all_market_data() returns MarketSnapshot (Pydantic model),
   not a plain dict — all agents type their input accordingly
+- FundState fields: cash (not cash_usd), positions 
+  (not open_positions)
+- AnalystReport fields: signal (not action)
