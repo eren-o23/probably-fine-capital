@@ -93,9 +93,8 @@ Every trade function checks this before executing.
 
 ## Tradeable Universe
 xStock tickers on Kraken:
-AAPL.x, NVDA.x, MSFT.x, TSLA.x, AMZN.x,
-GOOGL.x, META.x, AMD.x, SPY.x, QQQ.x
-(verify against live Kraken xStock listings)
+AAPLx/USD, NVDAx/USD, MSFTx/USD, TSLAx/USD, AMZNx/USD,
+GOOGLx/USD, METAx/USD, AMDx/USD, SPYx/USD, QQQx/USD
 
 ## Current Build Status
 - [ ] Day 1: Foundation (scaffold, models, config, 
