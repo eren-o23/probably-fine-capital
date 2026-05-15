@@ -1,6 +1,8 @@
 """Tests for MacroAnalyst.
 
 Runs without hitting any external APIs — call_llm is mocked throughout.
+Includes explicit unit tests for the Python-side regime classification,
+volatility labelling, and breadth computation.
 """
 
 from __future__ import annotations
@@ -11,10 +13,14 @@ import pytest
 
 from agents.macro_analyst import (
     MacroAnalyst,
+    _MacroLLMResponse,
     _build_prompt,
-    _pct_change,
-    _trend,
+    _classify_regime,
+    _compute_breadth,
     _format_anchor,
+    _pct_change,
+    _spy_volatility_label,
+    _trend,
 )
 from core.models import AnalystReport
 
@@ -38,22 +44,34 @@ _ALL_PRICES: dict[str, float] = {
     "QQQx/USD": 374.00,
 }
 
-# 48-element histories: steady climb from base to base * multiplier
+
 def _make_history(base: float, end: float, n: int = 48) -> list[float]:
     step = (end - base) / max(n - 1, 1)
     return [round(base + i * step, 2) for i in range(n)]
+
 
 _SPY_HISTORY = _make_history(400.0, 408.0)   # +2.00% over 48h
 _QQQ_HISTORY = _make_history(360.0, 367.2)   # +2.00% over 48h
 
 
-def _make_llm_result(signal: str = "buy", confidence: float = 0.75, reasoning: str = "markets trending up"):
-    from agents.macro_analyst import _MacroLLMResponse
-    return _MacroLLMResponse(signal=signal, confidence=confidence, reasoning=reasoning)
+def _make_llm_result(
+    signal: str = "buy",
+    confidence: float = 0.75,
+    reasoning: str = "Risk-on regime supports long exposure.",
+    market_regime: str = "risk_on",
+    rationale: str = "Buying NVDAx on risk-on macro confirmation.",
+) -> _MacroLLMResponse:
+    return _MacroLLMResponse(
+        reasoning=reasoning,
+        market_regime=market_regime,
+        signal=signal,  # type: ignore[arg-type]
+        confidence=confidence,
+        rationale=rationale,
+    )
 
 
 # ---------------------------------------------------------------------------
-# Pure helpers
+# _pct_change (existing helper — unchanged)
 # ---------------------------------------------------------------------------
 
 def test_pct_change_basic():
@@ -68,6 +86,10 @@ def test_pct_change_insufficient_data():
 def test_pct_change_zero_base():
     assert _pct_change([0.0, 10.0]) is None
 
+
+# ---------------------------------------------------------------------------
+# _trend (existing helper — unchanged)
+# ---------------------------------------------------------------------------
 
 def test_trend_up():
     assert _trend(_make_history(100.0, 101.0)) == "up"
@@ -85,13 +107,127 @@ def test_trend_unknown_on_empty():
     assert _trend([]) == "unknown"
 
 
+# ---------------------------------------------------------------------------
+# _format_anchor (existing helper — unchanged)
+# ---------------------------------------------------------------------------
+
 def test_format_anchor_empty_history():
     block = _format_anchor("SPY", [])
     assert "insufficient macro data" in block
 
 
 # ---------------------------------------------------------------------------
-# _build_prompt
+# _classify_regime (new)
+# ---------------------------------------------------------------------------
+
+def test_classify_regime_risk_on_both_strongly_up():
+    assert _classify_regime(2.0, 1.5) == "risk_on"
+
+
+def test_classify_regime_risk_on_boundary():
+    assert _classify_regime(0.31, 0.31) == "risk_on"
+
+
+def test_classify_regime_risk_off_both_strongly_down():
+    assert _classify_regime(-1.0, -0.5) == "risk_off"
+
+
+def test_classify_regime_risk_off_boundary():
+    assert _classify_regime(-0.31, -0.31) == "risk_off"
+
+
+def test_classify_regime_mixed_one_up_one_down():
+    assert _classify_regime(2.0, -0.5) == "mixed"
+
+
+def test_classify_regime_mixed_both_below_threshold():
+    assert _classify_regime(0.1, 0.2) == "mixed"
+
+
+def test_classify_regime_mixed_exactly_at_threshold():
+    # Threshold is exclusive: 0.3 is NOT > 0.3
+    assert _classify_regime(0.3, 0.3) == "mixed"
+
+
+def test_classify_regime_none_spy():
+    assert _classify_regime(None, 2.0) == "mixed"
+
+
+def test_classify_regime_none_qqq():
+    assert _classify_regime(2.0, None) == "mixed"
+
+
+def test_classify_regime_both_none():
+    assert _classify_regime(None, None) == "mixed"
+
+
+# ---------------------------------------------------------------------------
+# _spy_volatility_label (new)
+# ---------------------------------------------------------------------------
+
+def test_spy_volatility_label_high():
+    # Large swings: pct-changes ~3%, -5.8%, +7.2%, -7.7% → std >> 1.5%
+    volatile = [100.0, 103.0, 97.0, 104.0, 96.0]
+    assert _spy_volatility_label(volatile) == "high"
+
+
+def test_spy_volatility_label_normal():
+    # Tiny moves: pct-changes ~0.1% each → std << 1.5%
+    stable = [100.0, 100.1, 100.2, 100.1, 100.2]
+    assert _spy_volatility_label(stable) == "normal"
+
+
+def test_spy_volatility_label_unknown_empty():
+    assert _spy_volatility_label([]) == "unknown"
+
+
+def test_spy_volatility_label_unknown_one_price():
+    assert _spy_volatility_label([100.0]) == "unknown"
+
+
+def test_spy_volatility_label_unknown_two_prices():
+    # Two prices → one pct-change → can't compute std
+    assert _spy_volatility_label([100.0, 101.0]) == "unknown"
+
+
+def test_spy_volatility_label_minimum_valid_input():
+    # Three prices → two pct-changes → std computable
+    result = _spy_volatility_label([100.0, 100.1, 100.2])
+    assert result in ("high", "normal")
+
+
+# ---------------------------------------------------------------------------
+# _compute_breadth (new)
+# ---------------------------------------------------------------------------
+
+def test_compute_breadth_empty():
+    assert _compute_breadth({}) == (0, 0)
+
+
+def test_compute_breadth_known_split():
+    # sorted values: [100, 200, 300, 400, 500], median = 300
+    # above: 400, 500 → 2 advancing; below: 100, 200 → 2 declining
+    prices = {"A": 100.0, "B": 200.0, "C": 300.0, "D": 400.0, "E": 500.0}
+    advancing, declining = _compute_breadth(prices)
+    assert advancing == 2
+    assert declining == 2
+
+
+def test_compute_breadth_single_ticker():
+    # One ticker at median — neither advancing nor declining
+    advancing, declining = _compute_breadth({"A": 100.0})
+    assert advancing == 0
+    assert declining == 0
+
+
+def test_compute_breadth_all_different():
+    prices = {"A": 10.0, "B": 20.0, "C": 30.0}
+    advancing, declining = _compute_breadth(prices)
+    assert advancing + declining < len(prices)  # one at median, not counted
+
+
+# ---------------------------------------------------------------------------
+# _build_prompt — content checks
 # ---------------------------------------------------------------------------
 
 def test_prompt_contains_ticker():
@@ -116,9 +252,46 @@ def test_prompt_marks_evaluated_ticker():
     assert "← this ticker" in prompt
 
 
-def test_prompt_notes_insufficient_data_for_empty_spy():
+def test_prompt_contains_regime_classification():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    # SPY+QQQ both +2% → risk_on
+    assert "risk_on" in prompt
+
+
+def test_prompt_contains_breadth_counts():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    assert "advancing" in prompt
+    assert "declining" in prompt
+
+
+def test_prompt_contains_volatility_label():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    assert "SPY volatility" in prompt
+
+
+def test_prompt_contains_chain_of_thought_instruction():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    assert "chain-of-thought" in prompt.lower() or "Chain-of-thought" in prompt
+
+
+def test_prompt_contains_confidence_calibration():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    assert "0.85" in prompt
+
+
+def test_prompt_contains_market_regime_json_field():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    assert '"market_regime"' in prompt
+
+
+def test_prompt_contains_rationale_json_field():
+    prompt = _build_prompt(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+    assert '"rationale"' in prompt
+
+
+def test_prompt_shows_nva_for_empty_spy_history():
     prompt = _build_prompt(_TICKER, _ALL_PRICES, [], _QQQ_HISTORY)
-    assert "insufficient macro data" in prompt
+    assert "n/a" in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +311,16 @@ async def test_happy_path_returns_analyst_report():
     assert report.analyst_type == "macro"
 
 
+@pytest.mark.asyncio
+async def test_rationale_maps_to_report_reasoning():
+    result = _make_llm_result(rationale="Buying NVDAx on risk-on confirmation.")
+    with patch("agents.macro_analyst.call_llm", new=AsyncMock(return_value=result)):
+        analyst = MacroAnalyst()
+        report = await analyst.analyze(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+
+    assert report.reasoning == "Buying NVDAx on risk-on confirmation."
+
+
 # ---------------------------------------------------------------------------
 # LLM failure → safe hold
 # ---------------------------------------------------------------------------
@@ -155,12 +338,36 @@ async def test_llm_failure_returns_safe_hold():
 
 
 # ---------------------------------------------------------------------------
+# Invalid market_regime → None
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_invalid_market_regime_returns_none():
+    bad = _make_llm_result(market_regime="sideways")
+    with patch("agents.macro_analyst.call_llm", new=AsyncMock(return_value=bad)):
+        analyst = MacroAnalyst()
+        report = await analyst.analyze(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+
+    assert report is None
+
+
+@pytest.mark.asyncio
+async def test_empty_string_regime_returns_none():
+    bad = _make_llm_result(market_regime="")
+    with patch("agents.macro_analyst.call_llm", new=AsyncMock(return_value=bad)):
+        analyst = MacroAnalyst()
+        report = await analyst.analyze(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
+
+    assert report is None
+
+
+# ---------------------------------------------------------------------------
 # Below MIN_CONFIDENCE → None
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
 async def test_below_min_confidence_returns_none():
-    weak = _make_llm_result(signal="sell", confidence=0.30)
+    weak = _make_llm_result(signal="sell", confidence=0.30, market_regime="risk_off")
     with patch("agents.macro_analyst.call_llm", new=AsyncMock(return_value=weak)):
         analyst = MacroAnalyst()
         report = await analyst.analyze(_TICKER, _ALL_PRICES, _SPY_HISTORY, _QQQ_HISTORY)
@@ -169,7 +376,7 @@ async def test_below_min_confidence_returns_none():
 
 
 # ---------------------------------------------------------------------------
-# Empty SPY history — no crash, prompt notes insufficient data
+# Empty histories — no crash
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
