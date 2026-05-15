@@ -36,6 +36,7 @@ _SYSTEM_PROMPT = (
     "You look at index behaviour to guide individual stock decisions. "
     "You are balanced — you avoid overriding strong stock-specific signals "
     "with weak macro views. "
+    "The signal field must be exactly one of buy, sell, or hold — never a placeholder, ellipsis, or any other value. "
     "Respond with a single raw JSON object only. No markdown, no code fences, no prose before or after. "
     "Your entire response must be valid JSON."
 )

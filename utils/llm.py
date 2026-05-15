@@ -22,6 +22,26 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
+# Matches arithmetic expressions in JSON value slots (e.g. 0.75 * 0.9, +1.2 + 0.3)
+_ARITH_RE = re.compile(r"(?<=:)\s*([+\-]?\s*\d[\d.\s]*(?:[+\-*/]\s*\d[\d.\s]*)+)")
+
+
+def _eval_arithmetic_exprs(text: str) -> str:
+    """Replace arithmetic expressions in JSON value slots with their float results.
+
+    Only evaluates sequences of digits, spaces, and +-*/ . operators — nothing else.
+    """
+    def _replacer(m: re.Match) -> str:
+        expr = m.group(1).strip()
+        if re.fullmatch(r"[\d\s\+\-\*\/\.]+", expr):
+            try:
+                return " " + repr(float(eval(expr)))  # noqa: S307
+            except Exception:
+                pass
+        return m.group(0)
+    return _ARITH_RE.sub(_replacer, text)
+
+
 _client: AsyncOpenAI | None = None
 _LLM_SEMAPHORE = asyncio.Semaphore(1)
 _MAX_ATTEMPTS = 3
@@ -75,7 +95,7 @@ async def call_llm(
                     max_tokens=config.LLM_MAX_TOKENS,
                     temperature=config.LLM_TEMPERATURE,
                 )
-                await asyncio.sleep(7.0)
+                await asyncio.sleep(2.0)
             # Step 1: extract raw text
             choice = response.choices[0]
             raw = choice.message.content
@@ -100,6 +120,11 @@ async def call_llm(
                         response_model.__name__,
                     )
 
+            # Strip prose before the first { (model sometimes outputs reasoning as plain text)
+            brace_pos = text.find("{")
+            if brace_pos > 0:
+                text = text[brace_pos:]
+
             # Step 3: extract first {...} block
             json_match = re.search(r"\{.*\}", text, re.DOTALL)
             if not json_match:
@@ -112,9 +137,10 @@ async def call_llm(
                 return None
             extracted = json_match.group(0)
 
-            # Step 4: clean (strip comments and trailing commas) then parse
+            # Step 4: clean (strip comments, trailing commas, arithmetic exprs) then parse
             cleaned = re.sub(r"//.*$", "", extracted, flags=re.MULTILINE)
             cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+            cleaned = _eval_arithmetic_exprs(cleaned)
             try:
                 parsed = json.loads(cleaned)
             except json.JSONDecodeError as exc:
@@ -135,7 +161,7 @@ async def call_llm(
                         exc2,
                     )
                     try:
-                        parsed = ast.literal_eval(extracted)
+                        parsed = ast.literal_eval(cleaned)
                     except (ValueError, SyntaxError) as exc3:
                         logger.warning(
                             "call_llm: ast.literal_eval failed on attempt %d for %s: %s",
@@ -146,9 +172,17 @@ async def call_llm(
                         raise json.JSONDecodeError(str(exc3), extracted, 0) from exc3
 
             return response_model.model_validate(parsed)
-        except (json.JSONDecodeError, ValidationError) as exc:
+        except ValidationError as exc:
             logger.warning(
-                "call_llm: JSON/validation error on attempt %d for %s: %s",
+                "call_llm: Pydantic validation failed on attempt %d for %s: %s — parsed: %s",
+                attempt + 1,
+                response_model.__name__,
+                exc,
+                parsed,
+            )
+        except json.JSONDecodeError as exc:
+            logger.warning(
+                "call_llm: JSON error on attempt %d for %s: %s",
                 attempt + 1,
                 response_model.__name__,
                 exc,

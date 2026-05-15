@@ -82,7 +82,7 @@ async def test_429_retries_and_succeeds_on_second_attempt() -> None:
     assert result == _TestModel(value="ok")
     sleep_args = [c.args[0] for c in mock_sleep.await_args_list]
     assert 2 in sleep_args    # 2 ** 1 = 2s backoff after first 429
-    assert 7.0 in sleep_args  # rate-limiter sleep after successful call
+    assert 2.0 in sleep_args  # rate-limiter sleep after successful call
 
 
 @pytest.mark.asyncio
