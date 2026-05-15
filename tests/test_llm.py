@@ -42,8 +42,8 @@ def _rate_limit_error() -> openai.RateLimitError:
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_semaphore_limits_concurrency_to_five() -> None:
-    """10 concurrent call_llm calls never exceed 5 simultaneous HTTP requests."""
+async def test_semaphore_limits_concurrency_to_one() -> None:
+    """10 concurrent call_llm calls never exceed 1 simultaneous HTTP request."""
     concurrent = 0
     max_concurrent = 0
 
@@ -51,17 +51,17 @@ async def test_semaphore_limits_concurrency_to_five() -> None:
         nonlocal concurrent, max_concurrent
         concurrent += 1
         max_concurrent = max(max_concurrent, concurrent)
-        await asyncio.sleep(0.05)
         concurrent -= 1
         return _ok_response()
 
     mock_client = MagicMock()
     mock_client.chat.completions.create = tracked_create
 
-    with patch("utils.llm._get_client", return_value=mock_client):
+    with patch("utils.llm._get_client", return_value=mock_client), \
+         patch("asyncio.sleep", new_callable=AsyncMock):
         await asyncio.gather(*[call_llm("prompt", _TestModel) for _ in range(10)])
 
-    assert max_concurrent <= 5
+    assert max_concurrent <= 1
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +80,9 @@ async def test_429_retries_and_succeeds_on_second_attempt() -> None:
         result = await call_llm("prompt", _TestModel)
 
     assert result == _TestModel(value="ok")
-    mock_sleep.assert_awaited_once_with(2)  # 2 ** 1 = 2s on first retry
+    sleep_args = [c.args[0] for c in mock_sleep.await_args_list]
+    assert 2 in sleep_args    # 2 ** 1 = 2s backoff after first 429
+    assert 7.0 in sleep_args  # rate-limiter sleep after successful call
 
 
 @pytest.mark.asyncio

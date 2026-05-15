@@ -95,7 +95,7 @@ async def test_all_analysts_return_combined_list():
         desk = ResearchDesk()
         reports = await desk.analyze(_make_snapshot())
 
-    n_tickers = len(config.TRADEABLE_TICKERS)
+    n_tickers = len(config.ACTIVE_TICKERS)
     # Each ticker produces 3 reports → 30 total
     assert len(reports) == n_tickers * 3
     types = {r.analyst_type for r in reports}
@@ -117,8 +117,8 @@ async def test_none_results_are_filtered_out():
         desk = ResearchDesk()
         reports = await desk.analyze(_make_snapshot())
 
-    n_tickers = len(config.TRADEABLE_TICKERS)
-    # 2 analysts succeed × 18 tickers = 36
+    n_tickers = len(config.ACTIVE_TICKERS)
+    # 2 analysts succeed × 6 tickers = 12
     assert len(reports) == n_tickers * 2
     assert all(r.analyst_type in ("momentum", "macro") for r in reports)
 
@@ -138,7 +138,7 @@ async def test_all_analysts_fail_returns_empty_list():
 
 
 # ---------------------------------------------------------------------------
-# 54 tasks created — 3 analysts × 18 tickers
+# 18 tasks created — 3 analysts × 6 tickers
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -152,7 +152,7 @@ async def test_thirty_tasks_created():
         desk = ResearchDesk()
         await desk.analyze(_make_snapshot())
 
-    n_tickers = len(config.TRADEABLE_TICKERS)
+    n_tickers = len(config.ACTIVE_TICKERS)
     assert mom_inst.analyze.call_count == n_tickers
     assert sent_inst.analyze.call_count == n_tickers
     assert macro_inst.analyze.call_count == n_tickers
@@ -174,9 +174,9 @@ async def test_missing_momentum_signal_skipped_gracefully():
         # Snapshot with no momentum signals at all
         reports = await desk.analyze(_make_snapshot(include_signals=False))
 
-    # Momentum analyst never called — 2 analysts × 18 tickers = 36
+    # Momentum analyst never called — 2 analysts × 6 tickers = 12
     mom_inst.analyze.assert_not_called()
-    assert len(reports) == len(config.TRADEABLE_TICKERS) * 2
+    assert len(reports) == len(config.ACTIVE_TICKERS) * 2
 
 
 # ---------------------------------------------------------------------------

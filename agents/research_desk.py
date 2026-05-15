@@ -60,7 +60,7 @@ class ResearchDesk:
         qqq_history = market_data.price_histories.get("QQQx/USD", [])
 
         tasks: list[asyncio.coroutines] = []
-        for ticker in config.TRADEABLE_TICKERS:
+        for ticker in config.ACTIVE_TICKERS:
             signal = market_data.momentum_signals.get(ticker)
             history = market_data.price_histories.get(ticker, [])
             headlines = market_data.headlines.get(ticker, [])
@@ -84,6 +84,6 @@ class ResearchDesk:
         logger.info(
             "Research desk complete: %d signals from %d tickers",
             len(reports),
-            len(config.TRADEABLE_TICKERS),
+            len(config.ACTIVE_TICKERS),
         )
         return reports

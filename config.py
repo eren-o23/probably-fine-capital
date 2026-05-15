@@ -76,6 +76,8 @@ TRADEABLE_TICKERS: list[str] = [
     "LLYx/USD",
 ]
 
+ACTIVE_TICKERS: list[str] = TRADEABLE_TICKERS[:6]
+
 XSTOCK_ASSET_CLASS: str = "tokenized_asset"
 
 # ---------------------------------------------------------------------------

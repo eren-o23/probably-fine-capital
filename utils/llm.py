@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T", bound=BaseModel)
 
 _client: AsyncOpenAI | None = None
-_LLM_SEMAPHORE = asyncio.Semaphore(5)
+_LLM_SEMAPHORE = asyncio.Semaphore(1)
 _MAX_ATTEMPTS = 3
 
 
@@ -73,6 +73,7 @@ async def call_llm(
                     max_tokens=config.LLM_MAX_TOKENS,
                     temperature=config.LLM_TEMPERATURE,
                 )
+                await asyncio.sleep(7.0)
             raw = response.choices[0].message.content or ""
             parsed = json.loads(raw)
             return response_model.model_validate(parsed)

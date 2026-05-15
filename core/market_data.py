@@ -18,7 +18,7 @@ from typing import Literal
 import aiohttp
 from pydantic import BaseModel, Field
 
-from config import NEWS_API_KEY, TRADEABLE_TICKERS
+from config import ACTIVE_TICKERS, NEWS_API_KEY, TRADEABLE_TICKERS
 from utils.kraken_cli import get_price_history, get_prices
 
 logger = logging.getLogger(__name__)
@@ -116,7 +116,7 @@ async def get_current_prices() -> dict[str, float]:
         Empty dict on total failure.
     """
     try:
-        prices = await get_prices(TRADEABLE_TICKERS)
+        prices = await get_prices(ACTIVE_TICKERS)
         if not prices:
             logger.warning("get_current_prices: all tickers failed, returned empty dict")
         return prices
@@ -136,11 +136,11 @@ async def get_price_histories(periods: int = 48) -> dict[str, list[float]]:
         Tickers that fail are omitted rather than raising.
     """
     raw = await asyncio.gather(
-        *(get_price_history(t, interval=60, periods=periods) for t in TRADEABLE_TICKERS),
+        *(get_price_history(t, interval=60, periods=periods) for t in ACTIVE_TICKERS),
         return_exceptions=True,
     )
     histories: dict[str, list[float]] = {}
-    for ticker, result in zip(TRADEABLE_TICKERS, raw):
+    for ticker, result in zip(ACTIVE_TICKERS, raw):
         if isinstance(result, BaseException):
             logger.warning("get_price_histories: skipping %s — %s", ticker, result)
         else:
@@ -303,10 +303,10 @@ async def get_all_market_data(periods: int = 48) -> MarketSnapshot:
     headlines: dict[str, list[str]] = {}
     async with aiohttp.ClientSession() as session:
         news_results = await asyncio.gather(
-            *(get_news_headlines(t, session=session) for t in TRADEABLE_TICKERS),
+            *(get_news_headlines(t, session=session) for t in ACTIVE_TICKERS),
             return_exceptions=True,
         )
-    for ticker, result in zip(TRADEABLE_TICKERS, news_results):
+    for ticker, result in zip(ACTIVE_TICKERS, news_results):
         headlines[ticker] = result if not isinstance(result, BaseException) else []
 
     return MarketSnapshot(
