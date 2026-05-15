@@ -118,7 +118,7 @@ async def test_none_results_are_filtered_out():
         reports = await desk.analyze(_make_snapshot())
 
     n_tickers = len(config.TRADEABLE_TICKERS)
-    # 2 analysts succeed × 10 tickers = 20
+    # 2 analysts succeed × 18 tickers = 36
     assert len(reports) == n_tickers * 2
     assert all(r.analyst_type in ("momentum", "macro") for r in reports)
 
@@ -138,7 +138,7 @@ async def test_all_analysts_fail_returns_empty_list():
 
 
 # ---------------------------------------------------------------------------
-# 30 tasks created — 3 analysts × 10 tickers
+# 54 tasks created — 3 analysts × 18 tickers
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
@@ -174,7 +174,7 @@ async def test_missing_momentum_signal_skipped_gracefully():
         # Snapshot with no momentum signals at all
         reports = await desk.analyze(_make_snapshot(include_signals=False))
 
-    # Momentum analyst never called — 2 analysts × 10 tickers = 20
+    # Momentum analyst never called — 2 analysts × 18 tickers = 36
     mom_inst.analyze.assert_not_called()
     assert len(reports) == len(config.TRADEABLE_TICKERS) * 2
 

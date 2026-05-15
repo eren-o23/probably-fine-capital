@@ -66,6 +66,14 @@ TRADEABLE_TICKERS: list[str] = [
     "AMDx/USD",
     "SPYx/USD",
     "QQQx/USD",
+    "JPMx/USD",
+    "GLDx/USD",
+    "SGOVx/USD",
+    "JNJx/USD",
+    "PGx/USD",
+    "COINx/USD",
+    "PLTRx/USD",
+    "LLYx/USD",
 ]
 
 XSTOCK_ASSET_CLASS: str = "tokenized_asset"
