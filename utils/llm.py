@@ -6,6 +6,7 @@ Pydantic validation, one retry on parse failure, and safe-None return.
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import logging
@@ -75,32 +76,75 @@ async def call_llm(
                     temperature=config.LLM_TEMPERATURE,
                 )
                 await asyncio.sleep(7.0)
+            # Step 1: extract raw text
             choice = response.choices[0]
-            content = choice.message.content
-            if not content:
-                content = getattr(choice.message, "reasoning_content", None)
-            if not content:
+            raw = choice.message.content
+            if not raw:
+                raw = getattr(choice.message, "reasoning_content", None)
+            if not raw:
                 logger.error(
-                    "call_llm: no content in response for %s",
+                    "call_llm: no content in response on attempt %d for %s",
+                    attempt + 1,
                     response_model.__name__,
                 )
                 return None
-            original_content = content
-            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-            if not content:
-                think_match = re.search(r"<think>(.*?)</think>", original_content, re.DOTALL)
+
+            # Step 2: strip <think> blocks; if nothing remains, fall back to inside them
+            text = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            if not text:
+                think_match = re.search(r"<think>(.*?)</think>", raw, re.DOTALL)
                 if think_match:
-                    content = think_match.group(1).strip()
-            json_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if json_match:
-                content = json_match.group(0)
-            else:
+                    text = think_match.group(1).strip()
+                    logger.debug(
+                        "call_llm: fell back to <think> block content for %s",
+                        response_model.__name__,
+                    )
+
+            # Step 3: extract first {...} block
+            json_match = re.search(r"\{.*\}", text, re.DOTALL)
+            if not json_match:
                 logger.error(
-                    "call_llm: no JSON object found in response for %s",
+                    "call_llm: no JSON object found on attempt %d for %s — text: %.200s",
+                    attempt + 1,
                     response_model.__name__,
+                    text,
                 )
                 return None
-            parsed = json.loads(content)
+            extracted = json_match.group(0)
+
+            # Step 4: clean (strip comments and trailing commas) then parse
+            cleaned = re.sub(r"//.*$", "", extracted, flags=re.MULTILINE)
+            cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+            try:
+                parsed = json.loads(cleaned)
+            except json.JSONDecodeError as exc:
+                logger.warning(
+                    "call_llm: json.loads failed on attempt %d for %s (%s) — trying quote fix",
+                    attempt + 1,
+                    response_model.__name__,
+                    exc,
+                )
+                quote_fixed = re.sub(r"(?<!\\)'", '"', cleaned)
+                try:
+                    parsed = json.loads(quote_fixed)
+                except json.JSONDecodeError as exc2:
+                    logger.warning(
+                        "call_llm: quote fix failed on attempt %d for %s (%s) — trying ast.literal_eval",
+                        attempt + 1,
+                        response_model.__name__,
+                        exc2,
+                    )
+                    try:
+                        parsed = ast.literal_eval(extracted)
+                    except (ValueError, SyntaxError) as exc3:
+                        logger.warning(
+                            "call_llm: ast.literal_eval failed on attempt %d for %s: %s",
+                            attempt + 1,
+                            response_model.__name__,
+                            exc3,
+                        )
+                        raise json.JSONDecodeError(str(exc3), extracted, 0) from exc3
+
             return response_model.model_validate(parsed)
         except (json.JSONDecodeError, ValidationError) as exc:
             logger.warning(
