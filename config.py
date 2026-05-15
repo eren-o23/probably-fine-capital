@@ -40,7 +40,8 @@ def _optional(name: str, default: str) -> str:
 FIREWORKS_API_KEY: str = _require("FIREWORKS_API_KEY")
 KRAKEN_API_KEY: str = _require("KRAKEN_API_KEY")
 KRAKEN_API_SECRET: str = _require("KRAKEN_API_SECRET")
-NEWS_API_KEY: str = _require("NEWS_API_KEY")
+ALPACA_API_KEY: str = _require("ALPACA_API_KEY")
+ALPACA_API_SECRET: str = _require("ALPACA_API_SECRET")
 
 # Optional with defaults
 _paper_raw: str = _optional("PAPER_TRADING", "true")

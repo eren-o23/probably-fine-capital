@@ -5,7 +5,7 @@ headlines for every tradeable xStock ticker. All public functions return
 partial data on failure — they never raise.
 
 News headlines are cached per-ticker for 60 minutes to stay within
-NewsAPI free-tier limits.
+Alpaca free-tier limits.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Literal
 import aiohttp
 from pydantic import BaseModel, Field
 
-from config import ACTIVE_TICKERS, NEWS_API_KEY, TRADEABLE_TICKERS
+from config import ACTIVE_TICKERS, ALPACA_API_KEY, ALPACA_API_SECRET, TRADEABLE_TICKERS
 from utils.kraken_cli import get_price_history, get_prices
 
 logger = logging.getLogger(__name__)
@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 _NEWS_CACHE_TTL: timedelta = timedelta(minutes=60)
 _news_cache: dict[str, tuple[datetime, list[str]]] = {}
 
-_NEWSAPI_URL: str = "https://newsapi.org/v2/everything"
-_NEWS_PAGE_SIZE: int = 5
+_ALPACA_NEWS_URL: str = "https://data.alpaca.markets/v1beta1/news"
+_NEWS_PAGE_SIZE: int = 10
 
 # ---------------------------------------------------------------------------
 # Momentum thresholds
@@ -206,7 +206,7 @@ async def get_news_headlines(
     ticker: str,
     session: aiohttp.ClientSession | None = None,
 ) -> list[str]:
-    """Fetch recent news headlines for a single ticker from NewsAPI.org.
+    """Fetch recent news headlines for a single ticker from Alpaca Markets News API.
 
     Results are cached for 60 minutes per ticker. Returns an empty list on
     any failure — never raises.
@@ -217,7 +217,7 @@ async def get_news_headlines(
             closed) when not provided.
 
     Returns:
-        Up to 5 headline strings, most recent first. Empty list on failure.
+        Up to 10 headline strings, most recent first. Empty list on failure.
     """
     now = datetime.now(timezone.utc)
     cached = _news_cache.get(ticker)
@@ -228,12 +228,14 @@ async def get_news_headlines(
             return headlines
 
     symbol = _ticker_to_symbol(ticker)
+    headers = {
+        "APCA-API-KEY-ID": ALPACA_API_KEY,
+        "APCA-API-SECRET-KEY": ALPACA_API_SECRET,
+    }
     params = {
-        "q": symbol,
-        "pageSize": _NEWS_PAGE_SIZE,
-        "language": "en",
-        "sortBy": "publishedAt",
-        "apiKey": NEWS_API_KEY,
+        "symbols": symbol,
+        "limit": _NEWS_PAGE_SIZE,
+        "sort": "desc",
     }
 
     own_session = session is None
@@ -242,18 +244,19 @@ async def get_news_headlines(
 
     try:
         async with session.get(
-            _NEWSAPI_URL,
+            _ALPACA_NEWS_URL,
+            headers=headers,
             params=params,
             timeout=aiohttp.ClientTimeout(total=10),
         ) as resp:
             if resp.status != 200:
                 logger.warning(
-                    "get_news_headlines: NewsAPI HTTP %d for %s", resp.status, symbol
+                    "get_news_headlines: Alpaca HTTP %d for %s", resp.status, symbol
                 )
                 return []
             data = await resp.json()
             headlines = [
-                a["title"] for a in data.get("articles", []) if a.get("title")
+                a["headline"] for a in data.get("news", []) if a.get("headline")
             ]
             _news_cache[ticker] = (now, headlines)
             logger.debug(
