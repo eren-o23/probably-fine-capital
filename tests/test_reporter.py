@@ -99,7 +99,7 @@ class TestSuccessfulRun:
             new_callable=AsyncMock,
             side_effect=[_make_narrative(), _make_thread()],
         ):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [_make_instruction()], cycle_count=10, elapsed_seconds=3600.0
             )
 
@@ -114,7 +114,7 @@ class TestSuccessfulRun:
             new_callable=AsyncMock,
             side_effect=[narrative, _make_thread()],
         ):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [_make_instruction()], cycle_count=5, elapsed_seconds=7200.0
             )
 
@@ -133,7 +133,7 @@ class TestSuccessfulRun:
             new_callable=AsyncMock,
             side_effect=[_make_narrative(), _make_thread()],
         ):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [], cycle_count=1, elapsed_seconds=60.0
             )
 
@@ -147,7 +147,7 @@ class TestSuccessfulRun:
 class TestNarrativeFailure:
     async def test_minimal_report_written_when_narrative_returns_none(self, reporter: Reporter):
         with patch("agents.reporter.call_llm", new_callable=AsyncMock, return_value=None):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [_make_instruction()], cycle_count=3, elapsed_seconds=1800.0
             )
 
@@ -159,7 +159,7 @@ class TestNarrativeFailure:
 
     async def test_minimal_report_excludes_x_section(self, reporter: Reporter):
         with patch("agents.reporter.call_llm", new_callable=AsyncMock, return_value=None):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [], cycle_count=1, elapsed_seconds=60.0
             )
 
@@ -169,7 +169,7 @@ class TestNarrativeFailure:
     async def test_run_never_raises_on_narrative_exception(self, reporter: Reporter):
         """Even if call_llm raises unexpectedly, run() must return a filepath."""
         with patch("agents.reporter.call_llm", new_callable=AsyncMock, side_effect=RuntimeError("boom")):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [], cycle_count=1, elapsed_seconds=60.0
             )
 
@@ -183,7 +183,7 @@ class TestThreadFailure:
             new_callable=AsyncMock,
             side_effect=[_make_narrative(), None],
         ):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [_make_instruction()], cycle_count=4, elapsed_seconds=14400.0
             )
 
@@ -230,7 +230,7 @@ class TestTweetLength:
             new_callable=AsyncMock,
             side_effect=[_make_narrative(), long_thread],
         ):
-            filepath = await reporter.run(
+            filepath, _ = await reporter.run(
                 _make_fund_state(), [_make_instruction()], cycle_count=2, elapsed_seconds=600.0
             )
 
@@ -256,9 +256,3 @@ class TestPostToX:
 
         assert result is False
 
-    async def test_post_to_x_returns_false_when_enabled_but_stubbed(self, reporter: Reporter):
-        """Even with X_ENABLED=true the stub returns False — wiring is TODO."""
-        with patch.object(__import__("agents.reporter", fromlist=["config"]).config, "X_ENABLED", True):
-            result = await reporter.post_to_x(["tweet 1"])
-
-        assert result is False

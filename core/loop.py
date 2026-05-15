@@ -131,12 +131,14 @@ class TradingLoop:
         # Daily report — once per calendar day (UTC)
         today = date.today()
         if self.last_report_date != today:
-            await self.reporter.run(
+            filepath, tweets = await self.reporter.run(
                 self.state_manager.state,
                 instructions,
                 self.cycle_count,
                 elapsed,
             )
+            if tweets:
+                await self.reporter.post_to_x(tweets)
             self.last_report_date = today
 
         # Step 9 — increment counter

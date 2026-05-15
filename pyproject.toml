@@ -12,6 +12,7 @@ dependencies = [
     "pydantic>=2.6",
     "python-dotenv>=1.0",
     "openai>=1.30",       # Fireworks AI is OpenAI-compatible
+    "tweepy>=4.0",
 ]
 
 [project.optional-dependencies]

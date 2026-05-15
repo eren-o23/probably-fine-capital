@@ -14,12 +14,15 @@ run() never raises — reporter failure must not crash the trading loop.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel, Field
+import tweepy
 
 import config
 from core.models import FundState, TradeInstruction
@@ -110,14 +113,14 @@ class Reporter:
         instructions: list[TradeInstruction],
         cycle_count: int,
         elapsed_seconds: float,
-    ) -> str:
-        """Generate the daily report and return the written markdown filepath.
+    ) -> tuple[str, list[str] | None]:
+        """Generate the daily report and return the filepath and tweet list.
 
         Intended integration in core/loop.py:
             On TradingLoop add `last_report_date: date | None = None`.
             After each cycle, if `date.today() != self.last_report_date`,
-            await self.reporter.run(self.state_manager.state, today_instructions,
-                                    self.cycle_count, total_elapsed_seconds)
+            filepath, tweets = await self.reporter.run(...)
+            if tweets: await self.reporter.post_to_x(tweets)
             then set `self.last_report_date = date.today()`.
 
         Args:
@@ -127,7 +130,8 @@ class Reporter:
             elapsed_seconds: Total fund uptime in seconds.
 
         Returns:
-            Absolute path of the written markdown file, as a string.
+            (filepath, tweets) — filepath is the written markdown path as a string;
+            tweets is the truncated tweet list, or None if thread generation failed.
             Never raises — on LLM failure, a minimal report is written instead.
         """
         now = datetime.now(timezone.utc)
@@ -145,7 +149,7 @@ class Reporter:
         if narrative is None:
             self.logger.warning("Reporter: narrative LLM failed — writing minimal report")
             self._write_minimal_report(filepath, fund_state, instructions, cycle_count, elapsed_seconds, now)
-            return str(filepath)
+            return str(filepath), None
 
         try:
             thread = await self._call_thread(narrative)
@@ -163,7 +167,7 @@ class Reporter:
             filepath, fund_state, narrative, tweets, cycle_count, elapsed_seconds, now
         )
         self.logger.info("Reporter: wrote daily report to %s", filepath)
-        return str(filepath)
+        return str(filepath), tweets
 
     # ------------------------------------------------------------------
     # LLM calls
@@ -228,7 +232,7 @@ Rules:
   - Tweet 2: performance + positions
   - Tweet 3: trade recap
   - Tweet 4: outlook + risk flags
-  - Tweet 5: sign-off with #ProbablyFineCapital #xStocks
+  - Tweet 5: sign-off tagging @krakenfx @lablabai @Surgexyz_ with #ProbablyFineCapital #xStocks — keep under 280 chars
 
 Respond with valid JSON only:
 {{
@@ -349,5 +353,35 @@ Respond with valid JSON only:
         if not config.X_ENABLED:
             self.logger.info("X posting disabled — set X_ENABLED=true to activate")
             return False
-        # TODO: wire tweepy here
-        return False
+        consumer_key        = os.getenv("X_CONSUMER_KEY")
+        consumer_secret     = os.getenv("X_CONSUMER_SECRET")
+        access_token        = os.getenv("X_ACCESS_TOKEN")
+        access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
+
+        if not all([consumer_key, consumer_secret, access_token, access_token_secret]):
+            self.logger.warning("X posting skipped — missing credentials")
+            return False
+
+        try:
+            client = tweepy.Client(
+                consumer_key=consumer_key,
+                consumer_secret=consumer_secret,
+                access_token=access_token,
+                access_token_secret=access_token_secret,
+            )
+            previous_id = None
+            for tweet in tweets:
+                if previous_id is None:
+                    response = client.create_tweet(text=tweet)
+                else:
+                    response = client.create_tweet(
+                        text=tweet,
+                        in_reply_to_tweet_id=previous_id,
+                    )
+                previous_id = response.data["id"]
+                await asyncio.sleep(1)
+            self.logger.info("X thread posted (%d tweets)", len(tweets))
+            return True
+        except Exception as exc:
+            self.logger.error("X posting failed: %s", exc)
+            return False
