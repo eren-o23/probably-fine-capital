@@ -305,7 +305,7 @@ async def test_analyze_retries_on_bad_json_then_holds():
 
     assert report.signal == "hold"
     assert report.confidence == 0.0
-    assert mock_client.chat.completions.create.call_count == 2
+    assert mock_client.chat.completions.create.call_count == 3
 
 
 # ---------------------------------------------------------------------------
