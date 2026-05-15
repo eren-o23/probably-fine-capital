@@ -291,7 +291,7 @@ async def test_analyze_returns_safe_hold_on_llm_failure():
 @pytest.mark.asyncio
 async def test_analyze_retries_on_bad_json_then_holds():
     mock_choice = MagicMock()
-    mock_choice.message.content = "not valid json at all"
+    mock_choice.message.content = "{ not valid json at all }"
     mock_response = MagicMock()
     mock_response.choices = [mock_choice]
 

@@ -85,7 +85,21 @@ async def call_llm(
                     response_model.__name__,
                 )
                 return None
+            original_content = content
             content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            if not content:
+                think_match = re.search(r"<think>(.*?)</think>", original_content, re.DOTALL)
+                if think_match:
+                    content = think_match.group(1).strip()
+            json_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if json_match:
+                content = json_match.group(0)
+            else:
+                logger.error(
+                    "call_llm: no JSON object found in response for %s",
+                    response_model.__name__,
+                )
+                return None
             parsed = json.loads(content)
             return response_model.model_validate(parsed)
         except (json.JSONDecodeError, ValidationError) as exc:
