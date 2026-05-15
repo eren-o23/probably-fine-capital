@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 from typing import TypeVar
 
 from openai import AsyncOpenAI, RateLimitError
@@ -74,8 +75,18 @@ async def call_llm(
                     temperature=config.LLM_TEMPERATURE,
                 )
                 await asyncio.sleep(7.0)
-            raw = response.choices[0].message.content or ""
-            parsed = json.loads(raw)
+            choice = response.choices[0]
+            content = choice.message.content
+            if not content:
+                content = getattr(choice.message, "reasoning_content", None)
+            if not content:
+                logger.error(
+                    "call_llm: no content in response for %s",
+                    response_model.__name__,
+                )
+                return None
+            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+            parsed = json.loads(content)
             return response_model.model_validate(parsed)
         except (json.JSONDecodeError, ValidationError) as exc:
             logger.warning(
