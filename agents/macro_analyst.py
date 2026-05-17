@@ -241,6 +241,15 @@ Respond with valid JSON only:
   "signal": "buy" | "sell" | "hold",
   "confidence": 0.00,
   "rationale": "one sentence for trade log"
+}}
+
+Example of a valid response — copy this structure with your own REAL values. Never output "...", ellipses, or placeholders for any field; "signal" must be exactly "buy", "sell", or "hold" and "market_regime" exactly "risk_on", "risk_off", or "mixed":
+{{
+  "reasoning": "SPY is up 1.2% and QQQ up 1.4% with broad breadth; this ticker sits above the universe median, confirming relative strength into a risk-on tape.",
+  "market_regime": "risk_on",
+  "signal": "buy",
+  "confidence": 0.72,
+  "rationale": "Risk-on regime with confirming relative strength supports a long position."
 }}"""
 
 

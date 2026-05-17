@@ -108,9 +108,9 @@ FIREWORKS_BASE_URL: str = _optional(
     "FIREWORKS_BASE_URL", "https://api.fireworks.ai/inference/v1"
 )
 FIREWORKS_MODEL: str = _optional(
-    "FIREWORKS_MODEL", "accounts/fireworks/models/qwen3p6-plus"
+    "FIREWORKS_MODEL", "accounts/fireworks/models/kimi-k2p6"
 )
-LLM_MAX_TOKENS: int = 1000
+LLM_MAX_TOKENS: int = 2048
 LLM_TEMPERATURE: float = 0.1
 
 # ---------------------------------------------------------------------------

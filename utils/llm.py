@@ -22,24 +22,89 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T", bound=BaseModel)
 
-# Matches arithmetic expressions in JSON value slots (e.g. 0.75 * 0.9, +1.2 + 0.3)
-_ARITH_RE = re.compile(r"(?<=:)\s*([+\-]?\s*\d[\d.\s]*(?:[+\-*/]\s*\d[\d.\s]*)+)")
+# Captures one unquoted scalar value slot: ": <value>" up to the next , } or ]
+_VALUE_SLOT_RE = re.compile(r'(:\s*)([^"\[\{\s][^,}\]]*?)(\s*)(?=[,}\]])')
+# A value safe to evaluate: only digits, spaces, . and + - * / ( ) — nothing else
+_SAFE_ARITH_RE = re.compile(r"[\d\s+\-*/().]+")
 
 
 def _eval_arithmetic_exprs(text: str) -> str:
-    """Replace arithmetic expressions in JSON value slots with their float results.
+    """Replace arithmetic expressions in JSON value slots with their numeric result.
 
-    Only evaluates sequences of digits, spaces, and +-*/ . operators — nothing else.
+    The model sometimes emits values like ``0.5 + 0.2``, ``.6 * 0.8`` or
+    ``(0.5 + 0.2) / 2`` where a plain number is required. Each non-string,
+    non-object value slot is inspected: already-valid JSON scalars are left
+    untouched; anything composed solely of digits, spaces and + - * / . ( )
+    is evaluated and substituted. eval() runs with no builtins and the input
+    is char-restricted, so no names or calls are reachable.
     """
     def _replacer(m: re.Match) -> str:
-        expr = m.group(1).strip()
-        if re.fullmatch(r"[\d\s\+\-\*\/\.]+", expr):
+        prefix, raw, suffix = m.group(1), m.group(2).strip(), m.group(3)
+        if raw in ("true", "false", "null"):
+            return m.group(0)
+        try:
+            json.loads(raw)  # already a valid number — leave it alone
+            return m.group(0)
+        except ValueError:
+            pass
+        if _SAFE_ARITH_RE.fullmatch(raw):
             try:
-                return " " + repr(float(eval(expr)))  # noqa: S307
+                val = eval(raw, {"__builtins__": {}}, {})  # noqa: S307
+                if isinstance(val, (int, float)) and not isinstance(val, bool):
+                    return f"{prefix}{val!r}{suffix}"
             except Exception:
                 pass
         return m.group(0)
-    return _ARITH_RE.sub(_replacer, text)
+    return _VALUE_SLOT_RE.sub(_replacer, text)
+
+
+def _extract_first_json_object(text: str) -> str | None:
+    """Return the first complete balanced ``{...}`` object in ``text``.
+
+    Walks the string tracking brace depth while respecting string literals
+    and backslash escapes, so trailing prose or extra objects emitted after
+    the first one are discarded (fixes "Extra data" parse failures). Empty
+    ``{}`` objects are skipped — no response model has zero required fields,
+    so an empty object is always a placeholder the model emitted before the
+    real one. If an object is truncated (depth never returns to zero), the
+    missing closing braces are appended for a best-effort parse. Returns
+    None when no non-empty object is found.
+    """
+    search_from = 0
+    while True:
+        start = text.find("{", search_from)
+        if start == -1:
+            return None
+        depth = 0
+        in_string = False
+        escape = False
+        for i in range(start, len(text)):
+            ch = text[i]
+            if escape:
+                escape = False
+                continue
+            if ch == "\\":
+                escape = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = text[start : i + 1]
+                    if candidate[1:-1].strip():
+                        return candidate
+                    search_from = i + 1  # empty {} placeholder — keep scanning
+                    break
+        else:
+            if depth > 0:
+                return text[start:] + "}" * depth
+            return None
 
 
 _client: AsyncOpenAI | None = None
@@ -94,6 +159,10 @@ async def call_llm(
                     messages=messages,
                     max_tokens=config.LLM_MAX_TOKENS,
                     temperature=config.LLM_TEMPERATURE,
+                    response_format={
+                        "type": "json_object",
+                        "schema": response_model.model_json_schema(),
+                    },
                 )
                 await asyncio.sleep(2.0)
             # Step 1: extract raw text
@@ -120,14 +189,10 @@ async def call_llm(
                         response_model.__name__,
                     )
 
-            # Strip prose before the first { (model sometimes outputs reasoning as plain text)
-            brace_pos = text.find("{")
-            if brace_pos > 0:
-                text = text[brace_pos:]
-
-            # Step 3: extract first {...} block
-            json_match = re.search(r"\{.*\}", text, re.DOTALL)
-            if not json_match:
+            # Step 3: extract the first balanced {...} object (discards trailing
+            # prose / extra objects, repairs truncated ones)
+            extracted = _extract_first_json_object(text)
+            if extracted is None:
                 logger.error(
                     "call_llm: no JSON object found on attempt %d for %s — text: %.200s",
                     attempt + 1,
@@ -135,7 +200,6 @@ async def call_llm(
                     text,
                 )
                 return None
-            extracted = json_match.group(0)
 
             # Step 4: clean (strip comments, trailing commas, arithmetic exprs) then parse
             cleaned = re.sub(r"//.*$", "", extracted, flags=re.MULTILINE)

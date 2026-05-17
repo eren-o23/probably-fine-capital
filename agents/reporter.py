@@ -202,7 +202,7 @@ Open positions ({len(positions)}):
 Trades issued today ({len(trades)}):
 {trades if trades else 'none'}
 
-Respond with valid JSON only, using this exact schema:
+Respond with a single raw JSON object only. No markdown, no code fences, no prose before or after. Your entire response must be valid JSON, using this exact schema:
 {{
   "headline": "one punchy sentence, max 100 chars",
   "performance_summary": "2-3 sentences on P&L and positioning",
@@ -234,7 +234,7 @@ Rules:
   - Tweet 4: outlook + risk flags
   - Tweet 5: sign-off tagging @krakenfx @lablabai @Surgexyz_ with #ProbablyFineCapital #xStocks — keep under 280 chars
 
-Respond with valid JSON only:
+Respond with a single raw JSON object only. No markdown, no code fences, no prose before or after. Your entire response must be valid JSON:
 {{
   "tweets": ["tweet 1...", "tweet 2...", "tweet 3...", "tweet 4...", "tweet 5..."]
 }}"""
